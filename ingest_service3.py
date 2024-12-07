@@ -5,7 +5,6 @@ import os
 import logging
 from botocore.exceptions import ClientError, NoCredentialsError
 from dotenv import load_dotenv
-import time
 
 # Configurar el logging
 logging.basicConfig(level=logging.INFO)
@@ -35,140 +34,66 @@ def scan_dynamodb_table(session, table_name):
     
     return items
 
-def transform_items(items):
-    """Transforma los elementos de DynamoDB a un formato plano adecuado para CSV."""
-    transformed_items = []
+def process_dynamodb_items(items):
+    """Procesa los elementos DynamoDB y los transforma a un formato listo para CSV."""
+    processed_items = []
+
     for item in items:
-        transformed_item = {}
+        flat_item = {}
         for key, value in item.items():
             for data_type, data_value in value.items():
                 if data_type == 'S':
-                    transformed_item[key] = data_value
+                    if key == 'img':
+                        # Extraer tenant_id del campo 'img'
+                        img_parts = data_value.split('/')
+                        flat_item['tenant_id'] = img_parts[0]
+                        flat_item['img'] = '/'.join(img_parts[1:])
+                    else:
+                        flat_item[key] = data_value
                 elif data_type == 'N':
-                    transformed_item[key] = float(data_value)
+                    flat_item[key] = float(data_value)
                 elif data_type == 'BOOL':
-                    transformed_item[key] = data_value
+                    flat_item[key] = data_value
                 elif data_type == 'M':
-                    # Aplanar el diccionario anidado
+                    # Aplanar diccionarios anidados
                     for sub_key, sub_value in data_value.items():
-                        transformed_item[f"{key}_{sub_key}"] = sub_value['S']
+                        flat_item[f"{key}_{sub_key}"] = sub_value.get('S', str(sub_value))
                 elif data_type == 'L':
-                    transformed_item[key] = json.dumps(data_value)
+                    # Convertir listas a cadenas JSON limpias
+                    list_values = [v.get('S', str(v)) for v in data_value]
+                    flat_item[key] = json.dumps(list_values)
                 else:
-                    transformed_item[key] = str(data_value)
-        transformed_items.append(transformed_item)
-    return transformed_items
+                    flat_item[key] = str(data_value)
+        processed_items.append(flat_item)
+    
+    return processed_items
 
-def save_to_s3(session, data, bucket_name, file_name):
-    """Guarda los datos en un bucket S3."""
-    s3 = session.client('s3')
-    s3.put_object(Bucket=bucket_name, Key=file_name, Body=data)
-
-def create_glue_crawler(session, crawler_name, s3_target, role, database_name):
-    """Crea un crawler de AWS Glue."""
-    glue = session.client('glue')
-    try:
-        glue.create_crawler(
-            Name=crawler_name,
-            Role=role,
-            DatabaseName=database_name,
-            Targets={'S3Targets': [{'Path': s3_target}]},
-            SchemaChangePolicy={
-                'UpdateBehavior': 'UPDATE_IN_DATABASE',
-                'DeleteBehavior': 'DEPRECATE_IN_DATABASE'
-            }
-        )
-        logger.info(f"Crawler {crawler_name} creado exitosamente.")
-    except glue.exceptions.AlreadyExistsException:
-        logger.warning(f"Crawler {crawler_name} ya existe.")
-
-def start_glue_crawler(session, crawler_name):
-    """Inicia un crawler de AWS Glue."""
-    glue = session.client('glue')
-    try:
-        glue.start_crawler(Name=crawler_name)
-        logger.info(f"Crawler {crawler_name} iniciado.")
-    except glue.exceptions.CrawlerRunningException:
-        logger.warning(f"Crawler {crawler_name} ya está en ejecución.")
-    except glue.exceptions.CrawlerNotFoundException:
-        logger.error(f"Crawler {crawler_name} no encontrado.")
-    except Exception as e:
-        logger.error(f"Error al iniciar el crawler {crawler_name}: {e}")
-
-def wait_for_crawler(glue_client, crawler_name, retries=20, delay=60):
-    """Espera a que el crawler de AWS Glue complete su ejecución."""
-    for _ in range(retries):
-        try:
-            response = glue_client.get_crawler(Name=crawler_name)
-            state = response['Crawler']['State']
-            logger.info(f"Estado del crawler {crawler_name}: {state}")
-            if state == 'READY':
-                return True
-        except Exception as e:
-            logger.error(f"Error al obtener el estado del crawler {crawler_name}: {e}")
-        time.sleep(delay)
-    raise Exception(f"El crawler {crawler_name} no completó su ejecución después de varios intentos.")
+def save_to_csv(data, file_name):
+    """Guarda los datos en un archivo CSV."""
+    df = pd.DataFrame(data)
+    df.to_csv(file_name, index=False)
+    logger.info(f"Archivo CSV guardado: {file_name}")
 
 def main():
-    # Variables de entorno para la configuración
     table_name = os.getenv('DYNAMODB_TABLE_3_PROD')
-    bucket_name = os.getenv('S3_BUCKET_PROD')
-    file_format = os.getenv('FILE_FORMAT', 'csv')
-    role = os.getenv('AWS_ROLE_ARN')
-    ingest_type = 'ingest-service-3'
-    glue_database = f"glue_database_{ingest_type}_{table_name}_prod"
-    glue_crawler_name = f"crawler_{ingest_type}_{table_name}_prod"
+    output_file = os.getenv('OUTPUT_FILE', 'output.csv')
     
-    if not table_name or not bucket_name:
-        logger.error("Error: DYNAMODB_TABLE_3_PROD y S3_BUCKET_PROD son obligatorios.")
+    if not table_name:
+        logger.error("Error: DYNAMODB_TABLE_3_PROD es obligatorio.")
         return
-
-    logger.info("Iniciando sesión de boto3...")
+    
     session = create_boto3_session()
     
-    try:
-        logger.info(f"Escaneando la tabla DynamoDB: {table_name}...")
-        items = scan_dynamodb_table(session, table_name)
-    except ClientError as e:
-        if e.response['Error']['Code'] == 'ExpiredTokenException':
-            logger.error("El token de seguridad ha expirado. Por favor, renueva las credenciales de AWS.")
-            return
-        else:
-            logger.error(f"Error al escanear la tabla DynamoDB: {e}")
-            return
+    logger.info(f"Escaneando la tabla DynamoDB: {table_name}...")
+    items = scan_dynamodb_table(session, table_name)
     
-    logger.info("Transformando los elementos de DynamoDB...")
-    transformed_items = transform_items(items)
+    logger.info("Procesando los elementos de DynamoDB...")
+    processed_items = process_dynamodb_items(items)
     
-    if file_format == 'csv':
-        df = pd.DataFrame(transformed_items)
-        data = df.to_csv(index=False)
-        file_name = f'{ingest_type}/{table_name}.csv'  # Guardar en una carpeta específica
-    else:
-        data = json.dumps(transformed_items, indent=4)
-        file_name = f'{ingest_type}/{table_name}.json'  # Guardar en una carpeta específica
+    logger.info(f"Guardando los datos procesados en el archivo CSV: {output_file}...")
+    save_to_csv(processed_items, output_file)
     
-    logger.info(f"Guardando datos en el bucket S3: {bucket_name}...")
-    save_to_s3(session, data, bucket_name, file_name)
-    
-    logger.info(f"Ingesta de datos completada. Archivo subido a S3: {file_name}")
-    logger.info(f"Ruta completa del archivo CSV: s3://{bucket_name}/{file_name}")
-    
-    # Crear y ejecutar el crawler de AWS Glue
-    s3_target = f"s3://{bucket_name}/{ingest_type}/"  # Apuntar a la carpeta específica
-    create_glue_crawler(session, glue_crawler_name, s3_target, role, glue_database)
-    start_glue_crawler(session, glue_crawler_name)
-    
-    # Esperar a que el crawler complete su ejecución
-    glue_client = session.client('glue')
-    wait_for_crawler(glue_client, glue_crawler_name)
-
-    # Eliminar la tabla existente para forzar la reconstrucción del esquema
-    try:
-        glue_client.delete_table(DatabaseName=glue_database, Name=f"{ingest_type}_{table_name}_csv")
-        logger.info(f"Tabla {ingest_type}_{table_name}_csv eliminada para forzar la reconstrucción del esquema.")
-    except glue_client.exceptions.EntityNotFoundException:
-        logger.info(f"La tabla {ingest_type}_{table_name}_csv no existe, no es necesario eliminarla.")
+    logger.info("Proceso completado con éxito.")
 
 if __name__ == "__main__":
     main()

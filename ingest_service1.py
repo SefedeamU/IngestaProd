@@ -52,7 +52,18 @@ def transform_items(items):
         transformed_item = {}
         for key, value in item.items():
             for data_type, data_value in value.items():
-                transformed_item[key] = data_value
+                if data_type == 'S':
+                    transformed_item[key] = data_value
+                elif data_type == 'N':
+                    transformed_item[key] = float(data_value)
+                elif data_type == 'BOOL':
+                    transformed_item[key] = data_value
+                elif data_type == 'M':
+                    transformed_item[key] = json.dumps(data_value)
+                elif data_type == 'L':
+                    transformed_item[key] = json.dumps(data_value)
+                else:
+                    transformed_item[key] = str(data_value)
         transformed_items.append(transformed_item)
     return transformed_items
 

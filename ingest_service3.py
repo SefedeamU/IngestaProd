@@ -41,18 +41,19 @@ def transform_items(items):
     for item in items:
         transformed_item = {}
         for key, value in item.items():
-            # DynamoDB devuelve los valores como un diccionario con un solo par clave-valor
-            if isinstance(value, dict):
-                # Extraer el primer (y único) valor del diccionario
-                data_type, data_value = next(iter(value.items()))
-                if isinstance(data_value, dict):
-                    # Si es un diccionario anidado, aplanar
-                    for sub_key, sub_value in data_value.items():
-                        transformed_item[f"{key}_{sub_key}"] = sub_value
-                else:
+            for data_type, data_value in value.items():
+                if data_type == 'S':
                     transformed_item[key] = data_value
-            else:
-                transformed_item[key] = value
+                elif data_type == 'N':
+                    transformed_item[key] = float(data_value)
+                elif data_type == 'BOOL':
+                    transformed_item[key] = data_value
+                elif data_type == 'M':
+                    transformed_item[key] = json.dumps(data_value)
+                elif data_type == 'L':
+                    transformed_item[key] = json.dumps(data_value)
+                else:
+                    transformed_item[key] = str(data_value)
         transformed_items.append(transformed_item)
     return transformed_items
 

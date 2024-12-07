@@ -7,7 +7,20 @@ from botocore.exceptions import ClientError, NoCredentialsError
 from dotenv import load_dotenv
 
 # Configurar el logging
-logging.basicConfig(level=logging.INFO)
+log_directory = "/home/ubuntu/logs"
+if not os.path.exists(log_directory):
+    os.makedirs(log_directory)
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s.%(msecs)03d %(levelname)s %(name)s %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S',
+    handlers=[
+        logging.FileHandler(f"{log_directory}/ingest_service3.log"),
+        logging.StreamHandler()
+    ]
+)
+
 logger = logging.getLogger(__name__)
 
 # Cargar las variables de entorno desde el archivo .env
@@ -43,19 +56,13 @@ def process_dynamodb_items(items):
         for key, value in item.items():
             for data_type, data_value in value.items():
                 if data_type == 'S':
-                    if key == 'img':
-                        # Extraer tenant_id del campo 'img'
-                        img_parts = data_value.split('/')
-                        flat_item['tenant_id'] = img_parts[0]
-                        flat_item['img'] = '/'.join(img_parts[1:])
-                    else:
-                        flat_item[key] = data_value
+                    flat_item[key] = data_value
                 elif data_type == 'N':
                     flat_item[key] = float(data_value)
                 elif data_type == 'BOOL':
                     flat_item[key] = data_value
                 elif data_type == 'M':
-                    # Aplanar diccionarios anidados
+                    # Aplanar el diccionario anidado
                     for sub_key, sub_value in data_value.items():
                         flat_item[f"{key}_{sub_key}"] = sub_value.get('S', str(sub_value))
                 elif data_type == 'L':

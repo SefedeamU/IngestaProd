@@ -5,10 +5,22 @@ import os
 import logging
 from botocore.exceptions import ClientError, NoCredentialsError
 from dotenv import load_dotenv
-import time
 
 # Configurar el logging
-logging.basicConfig(level=logging.INFO)
+log_directory = "/home/ubuntu/logs"
+if not os.path.exists(log_directory):
+    os.makedirs(log_directory)
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s.%(msecs)03d %(levelname)s %(name)s %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S',
+    handlers=[
+        logging.FileHandler(f"{log_directory}/ingest_service4.log"),
+        logging.StreamHandler()
+    ]
+)
+
 logger = logging.getLogger(__name__)
 
 # Cargar las variables de entorno desde el archivo .env
@@ -45,12 +57,21 @@ def transform_items(items):
             if isinstance(value, dict):
                 # Extraer el primer (y único) valor del diccionario
                 data_type, data_value = next(iter(value.items()))
-                if isinstance(data_value, dict):
-                    # Si es un diccionario anidado, aplanar
+                if data_type == 'S':
+                    transformed_item[key] = data_value
+                elif data_type == 'N':
+                    transformed_item[key] = float(data_value)
+                elif data_type == 'BOOL':
+                    transformed_item[key] = data_value
+                elif data_type == 'M':
+                    # Aplanar el diccionario anidado
                     for sub_key, sub_value in data_value.items():
                         transformed_item[f"{key}_{sub_key}"] = sub_value
+                elif data_type == 'L':
+                    # Convertir la lista en una cadena JSON
+                    transformed_item[key] = json.dumps(data_value)
                 else:
-                    transformed_item[key] = data_value
+                    transformed_item[key] = str(data_value)
             else:
                 transformed_item[key] = value
         transformed_items.append(transformed_item)

@@ -1,7 +1,7 @@
 import time
 import boto3
 import pandas as pd
-from botocore.exceptions import BotoCoreError, NoCredentialsError
+from botocore.exceptions import BotoCoreError, NoCredentialsError, ClientError
 from dotenv import load_dotenv
 import logging
 import os
@@ -131,14 +131,6 @@ def main():
     output_location = f"s3://{s3_bucket}/athena-results/"
     
     # Construir la lista de bases de datos Glue utilizando las variables de entorno
-    ingest_services = [
-        'ingest-service-1',
-        'ingest-service-2',
-        'ingest-service-3',
-        'ingest-service-4',
-        'ingest-service-5'
-    ]
-    
     glue_databases = [
         f"glue_database_ingest-service-1_{os.getenv('DYNAMODB_TABLE_1_PROD')}_prod",
         f"glue_database_ingest-service-2_{os.getenv('DYNAMODB_TABLE_2_PROD')}_prod",
@@ -147,15 +139,22 @@ def main():
         f"glue_database_ingest-service-5_{os.getenv('DYNAMODB_TABLE_5_PROD')}_prod"
     ]
     
-    glue_tables = [f"{service.replace('-', '_')}" for service in ingest_services]  # Derivar el nombre de la tabla de Glue
+    glue_crawlers = [
+        f"crawler_ingest-service-1_{os.getenv('DYNAMODB_TABLE_1_PROD')}_prod",
+        f"crawler_ingest-service-2_{os.getenv('DYNAMODB_TABLE_2_PROD')}_prod",
+        f"crawler_ingest-service-3_{os.getenv('DYNAMODB_TABLE_3_PROD')}_prod",
+        f"crawler_ingest-service-4_{os.getenv('DYNAMODB_TABLE_4_PROD')}_prod",
+        f"crawler_ingest-service-5_{os.getenv('DYNAMODB_TABLE_5_PROD')}_prod"
+    ]
+    
+    glue_tables = [f"{service.replace('-', '_')}" for service in glue_databases]  # Derivar el nombre de la tabla de Glue
     
     # Esperar a que los catálogos de datos estén disponibles
     wait_for_catalogs(glue_client, glue_databases)
 
-    for glue_database, glue_table in zip(glue_databases, glue_tables):
+    for glue_database, glue_crawler, glue_table in zip(glue_databases, glue_crawlers, glue_tables):
         # Esperar a que el crawler complete su ejecución
-        crawler_name = f"crawler_{glue_table.replace('_', '-')}_prod"
-        if not wait_for_crawler(glue_client, crawler_name):
+        if not wait_for_crawler(glue_client, glue_crawler):
             continue
         
         query = f"SELECT * FROM {glue_table}"  # Usar el nombre de la tabla derivado del archivo CSV

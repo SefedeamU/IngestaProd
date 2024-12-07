@@ -49,7 +49,9 @@ def transform_items(items):
                 elif data_type == 'BOOL':
                     transformed_item[key] = data_value
                 elif data_type == 'M':
-                    transformed_item[key] = json.dumps(data_value)
+                    # Aplanar el diccionario anidado
+                    for sub_key, sub_value in data_value.items():
+                        transformed_item[f"{key}_{sub_key}"] = sub_value['S']
                 elif data_type == 'L':
                     transformed_item[key] = json.dumps(data_value)
                 else:

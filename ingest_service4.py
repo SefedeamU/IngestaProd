@@ -3,54 +3,23 @@ import pandas as pd
 import json
 import os
 import logging
-from botocore.config import Config
-from botocore.exceptions import BotoCoreError, NoCredentialsError
+from botocore.exceptions import ClientError
 from dotenv import load_dotenv
+import time
 
 # Configurar el logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s.%(msecs)03d %(levelname)s %(name)s %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S',
-    handlers=[
-        logging.FileHandler(f"/logs/{os.getenv('CONTAINER_NAME')}.log"),
-        logging.StreamHandler()
-    ]
-)
-
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Cargar las variables de entorno desde el archivo .env
 load_dotenv()
 
 def create_boto3_session():
-    """Crea una sesión de boto3 usando un rol IAM y una región específica."""
+    """Crea una sesión de boto3 usando las credenciales especificadas en el archivo de configuración."""
     try:
-        # Variables de entorno necesarias
-        role_arn = os.getenv('AWS_ROLE_ARN')
-        region = os.getenv('AWS_REGION', 'us-east-1')
-        
-        # Si el ARN del rol está definido, asume el rol
-        if role_arn:
-            sts_client = boto3.client('sts', region_name=region)
-            assumed_role = sts_client.assume_role(
-                RoleArn=role_arn,
-                RoleSessionName='DataIngestionSession'
-            )
-            credentials = assumed_role['Credentials']
-            
-            session = boto3.Session(
-                aws_access_key_id=credentials['AccessKeyId'],
-                aws_secret_access_key=credentials['SecretAccessKey'],
-                aws_session_token=credentials['SessionToken'],
-                region_name=region
-            )
-        else:
-            # Usar credenciales por defecto si no se especifica un rol
-            session = boto3.Session(region_name=region)
-        
+        session = boto3.Session(region_name=os.getenv('AWS_REGION', 'us-east-1'))
         return session
-    except (BotoCoreError, NoCredentialsError) as e:
+    except (ClientError, NoCredentialsError) as e:
         logger.error(f"Error al crear la sesión de boto3: {e}")
         raise
 
@@ -65,6 +34,28 @@ def scan_dynamodb_table(session, table_name):
         items.extend(page['Items'])
     
     return items
+
+def transform_items(items):
+    """Transforma los elementos de DynamoDB a un formato plano adecuado para CSV."""
+    transformed_items = []
+    for item in items:
+        transformed_item = {}
+        for key, value in item.items():
+            # DynamoDB devuelve los valores como un diccionario con un solo par clave-valor
+            if isinstance(value, dict):
+                # Extraer el primer (y único) valor del diccionario
+                data_type, data_value = next(iter(value.items()))
+                if isinstance(data_value, dict):
+                    # Si es un diccionario anidado, aplanar
+                    for sub_key, sub_value in data_value.items():
+                        transformed_item[f"{key}_{sub_key}"] = sub_value
+                else:
+                    transformed_item[key] = data_value
+            else:
+                transformed_item[key] = value
+        transformed_items.append(transformed_item)
+    return transformed_items
+
 
 def save_to_s3(session, data, bucket_name, file_name):
     """Guarda los datos en un bucket S3."""
@@ -92,8 +83,29 @@ def create_glue_crawler(session, crawler_name, s3_target, role, database_name):
 def start_glue_crawler(session, crawler_name):
     """Inicia un crawler de AWS Glue."""
     glue = session.client('glue')
-    glue.start_crawler(Name=crawler_name)
-    logger.info(f"Crawler {crawler_name} iniciado.")
+    try:
+        glue.start_crawler(Name=crawler_name)
+        logger.info(f"Crawler {crawler_name} iniciado.")
+    except glue.exceptions.CrawlerRunningException:
+        logger.warning(f"Crawler {crawler_name} ya está en ejecución.")
+    except glue.exceptions.CrawlerNotFoundException:
+        logger.error(f"Crawler {crawler_name} no encontrado.")
+    except Exception as e:
+        logger.error(f"Error al iniciar el crawler {crawler_name}: {e}")
+
+def wait_for_crawler(glue_client, crawler_name, retries=20, delay=60):
+    """Espera a que el crawler de AWS Glue complete su ejecución."""
+    for _ in range(retries):
+        try:
+            response = glue_client.get_crawler(Name=crawler_name)
+            state = response['Crawler']['State']
+            logger.info(f"Estado del crawler {crawler_name}: {state}")
+            if state == 'READY':
+                return True
+        except Exception as e:
+            logger.error(f"Error al obtener el estado del crawler {crawler_name}: {e}")
+        time.sleep(delay)
+    raise Exception(f"El crawler {crawler_name} no completó su ejecución después de varios intentos.")
 
 def main():
     # Variables de entorno para la configuración
@@ -101,8 +113,9 @@ def main():
     bucket_name = os.getenv('S3_BUCKET_PROD')
     file_format = os.getenv('FILE_FORMAT', 'csv')
     role = os.getenv('AWS_ROLE_ARN')
-    glue_database = f"glue_database_{table_name}_PROD"
-    glue_crawler_name = f"crawler_{table_name}_PROD"
+    ingest_type = 'ingest-service-4'
+    glue_database = f"glue_database_{ingest_type}_{table_name}_prod"
+    glue_crawler_name = f"crawler_{ingest_type}_{table_name}_prod"
     
     if not table_name or not bucket_name:
         logger.error("Error: DYNAMODB_TABLE_4_PROD y S3_BUCKET_PROD son obligatorios.")
@@ -111,26 +124,49 @@ def main():
     logger.info("Iniciando sesión de boto3...")
     session = create_boto3_session()
     
-    logger.info(f"Escaneando la tabla DynamoDB: {table_name}...")
-    items = scan_dynamodb_table(session, table_name)
+    try:
+        logger.info(f"Escaneando la tabla DynamoDB: {table_name}...")
+        items = scan_dynamodb_table(session, table_name)
+    except ClientError as e:
+        if e.response['Error']['Code'] == 'ExpiredTokenException':
+            logger.error("El token de seguridad ha expirado. Por favor, renueva las credenciales de AWS.")
+            return
+        else:
+            logger.error(f"Error al escanear la tabla DynamoDB: {e}")
+            return
+    
+    logger.info("Transformando los elementos de DynamoDB...")
+    transformed_items = transform_items(items)
     
     if file_format == 'csv':
-        df = pd.DataFrame(items)
+        df = pd.DataFrame(transformed_items)
         data = df.to_csv(index=False)
-        file_name = f'{table_name}.csv'
+        file_name = f'{ingest_type}/{table_name}.csv'  # Guardar en una carpeta específica
     else:
-        data = json.dumps(items, indent=4)
-        file_name = f'{table_name}.json'
+        data = json.dumps(transformed_items, indent=4)
+        file_name = f'{ingest_type}/{table_name}.json'  # Guardar en una carpeta específica
     
     logger.info(f"Guardando datos en el bucket S3: {bucket_name}...")
     save_to_s3(session, data, bucket_name, file_name)
     
     logger.info(f"Ingesta de datos completada. Archivo subido a S3: {file_name}")
+    logger.info(f"Ruta completa del archivo CSV: s3://{bucket_name}/{file_name}")
     
     # Crear y ejecutar el crawler de AWS Glue
-    s3_target = f"s3://{bucket_name}/{file_name}"
+    s3_target = f"s3://{bucket_name}/{ingest_type}/"  # Apuntar a la carpeta específica
     create_glue_crawler(session, glue_crawler_name, s3_target, role, glue_database)
     start_glue_crawler(session, glue_crawler_name)
+    
+    # Esperar a que el crawler complete su ejecución
+    glue_client = session.client('glue')
+    wait_for_crawler(glue_client, glue_crawler_name)
+
+    # Eliminar la tabla existente para forzar la reconstrucción del esquema
+    try:
+        glue_client.delete_table(DatabaseName=glue_database, Name=f"{ingest_type}_{table_name}_csv")
+        logger.info(f"Tabla {ingest_type}_{table_name}_csv eliminada para forzar la reconstrucción del esquema.")
+    except glue_client.exceptions.EntityNotFoundException:
+        logger.info(f"La tabla {ingest_type}_{table_name}_csv no existe, no es necesario eliminarla.")
 
 if __name__ == "__main__":
     main()

@@ -147,7 +147,13 @@ def main():
         f"crawler_ingest-service-5_{os.getenv('DYNAMODB_TABLE_5_PROD')}_prod"
     ]
     
-    glue_tables = [f"{service.replace('-', '_')}" for service in glue_databases]  # Derivar el nombre de la tabla de Glue
+    glue_tables = [
+        "ingest_service_1",
+        "ingest_service_2",
+        "ingest_service_3",
+        "ingest_service_4",
+        "ingest_service_5"
+    ]
     
     # Esperar a que los catálogos de datos estén disponibles
     wait_for_catalogs(glue_client, glue_databases)

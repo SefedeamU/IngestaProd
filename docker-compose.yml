@@ -13,6 +13,7 @@ services:
     volumes:
       - mysql_data:/var/lib/mysql
     restart: always
+
   ingest1:
     build: .
     environment:
@@ -23,8 +24,13 @@ services:
     depends_on:
       - mysql
     volumes:
-      - logs:/logs
-      - /home/ubuntu/.aws/credentials:/root/.aws/credentials:ro
+      - type: bind
+        source: /home/ubuntu/logs
+        target: /logs
+      - type: bind
+        source: /home/ubuntu/.aws/credentials
+        target: /root/.aws/credentials
+        read_only: true
     command: ["python", "ingest_service1.py"]
 
   ingest2:
@@ -37,8 +43,13 @@ services:
     depends_on:
       - mysql
     volumes:
-      - logs:/logs
-      - /home/ubuntu/.aws/credentials:/root/.aws/credentials:ro
+      - type: bind
+        source: /home/ubuntu/logs
+        target: /logs
+      - type: bind
+        source: /home/ubuntu/.aws/credentials
+        target: /root/.aws/credentials
+        read_only: true
     command: ["python", "ingest_service2.py"]
 
   ingest3:
@@ -51,8 +62,13 @@ services:
     depends_on:
       - mysql
     volumes:
-      - logs:/logs
-      - /home/ubuntu/.aws/credentials:/root/.aws/credentials:ro
+      - type: bind
+        source: /home/ubuntu/logs
+        target: /logs
+      - type: bind
+        source: /home/ubuntu/.aws/credentials
+        target: /root/.aws/credentials
+        read_only: true
     command: ["python", "ingest_service3.py"]
 
   ingest4:
@@ -65,8 +81,13 @@ services:
     depends_on:
       - mysql
     volumes:
-      - logs:/logs
-      - /home/ubuntu/.aws/credentials:/root/.aws/credentials:ro
+      - type: bind
+        source: /home/ubuntu/logs
+        target: /logs
+      - type: bind
+        source: /home/ubuntu/.aws/credentials
+        target: /root/.aws/credentials
+        read_only: true
     command: ["python", "ingest_service4.py"]
 
   ingest5:
@@ -79,8 +100,13 @@ services:
     depends_on:
       - mysql
     volumes:
-      - logs:/logs
-      - /home/ubuntu/.aws/credentials:/root/.aws/credentials:ro
+      - type: bind
+        source: /home/ubuntu/logs
+        target: /logs
+      - type: bind
+        source: /home/ubuntu/.aws/credentials
+        target: /root/.aws/credentials
+        read_only: true
     command: ["python", "ingest_service5.py"]
 
   etl:
@@ -97,16 +123,14 @@ services:
       - ingest4
       - ingest5
     volumes:
-      - logs:/logs
-      - /home/ubuntu/.aws/credentials:/root/.aws/credentials:ro
+      - type: bind
+        source: /home/ubuntu/logs
+        target: /logs
+      - type: bind
+        source: /home/ubuntu/.aws/credentials
+        target: /root/.aws/credentials
+        read_only: true
     command: ["python", "etl_service.py"]
 
 volumes:
   mysql_data:
-  logs:
-    driver: local
-    driver_opts:
-      type: none
-      o: bind
-      device: /home/ubuntu/logs
-

@@ -48,6 +48,7 @@ def scan_dynamodb_table(session, table_name):
 def transform_items(items):
     """Transforma los elementos de DynamoDB a un formato plano adecuado para CSV."""
     transformed_items = []
+
     for item in items:
         transformed_item = {}
         for key, value in item.items():
@@ -55,24 +56,32 @@ def transform_items(items):
             if isinstance(value, dict):
                 # Extraer el primer (y único) valor del diccionario
                 data_type, data_value = next(iter(value.items()))
-                if data_type == 'S':
+                if data_type == 'S':  # String
                     transformed_item[key] = data_value
-                elif data_type == 'N':
-                    transformed_item[key] = float(data_value)
-                elif data_type == 'BOOL':
+                elif data_type == 'N':  # Number
+                    transformed_item[key] = float(data_value) if '.' in data_value else int(data_value)
+                elif data_type == 'BOOL':  # Boolean
                     transformed_item[key] = data_value
-                elif data_type == 'M':
+                elif data_type == 'M':  # Map (anidado)
                     # Aplanar el diccionario anidado
                     for sub_key, sub_value in data_value.items():
-                        transformed_item[f"{key}_{sub_key}"] = sub_value
-                elif data_type == 'L':
-                    # Convertir la lista en una cadena JSON
+                        # Asumimos que los sub_valores son del mismo formato {tipo: valor}
+                        sub_type, sub_val = next(iter(sub_value.items()))
+                        transformed_item[f"{key}_{sub_key}"] = (
+                            float(sub_val) if sub_type == 'N' and '.' in sub_val else
+                            int(sub_val) if sub_type == 'N' else
+                            sub_val
+                        )
+                elif data_type == 'L':  # Lista
+                    # Convertir la lista en una cadena JSON para que sea legible
                     transformed_item[key] = json.dumps(data_value)
                 else:
+                    # Manejar tipos no comunes convirtiéndolos a cadena
                     transformed_item[key] = str(data_value)
             else:
                 transformed_item[key] = value
         transformed_items.append(transformed_item)
+    
     return transformed_items
 
 def save_to_s3(session, data, bucket_name, file_name):

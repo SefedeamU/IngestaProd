@@ -3,7 +3,7 @@ import pandas as pd
 import json
 import os
 import logging
-from botocore.exceptions import ClientError
+from botocore.exceptions import ClientError, NoCredentialsError
 from dotenv import load_dotenv
 import time
 
@@ -55,7 +55,6 @@ def transform_items(items):
                 transformed_item[key] = value
         transformed_items.append(transformed_item)
     return transformed_items
-
 
 def save_to_s3(session, data, bucket_name, file_name):
     """Guarda los datos en un bucket S3."""

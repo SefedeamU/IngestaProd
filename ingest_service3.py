@@ -3,7 +3,7 @@ import pandas as pd
 import json
 import os
 import logging
-from botocore.exceptions import ClientError
+from botocore.exceptions import ClientError, NoCredentialsError
 from dotenv import load_dotenv
 import time
 
@@ -13,12 +13,6 @@ logger = logging.getLogger(__name__)
 
 # Cargar las variables de entorno desde el archivo .env
 load_dotenv()
-
-def save_to_s3(session, data, bucket_name, file_name):
-    """Guarda los datos en un bucket S3."""
-    s3 = session.client('s3')
-    s3.put_object(Bucket=bucket_name, Key=file_name, Body=data)
-
 
 def create_boto3_session():
     """Crea una sesión de boto3 usando las credenciales especificadas en el archivo de configuración."""
@@ -62,6 +56,10 @@ def transform_items(items):
         transformed_items.append(transformed_item)
     return transformed_items
 
+def save_to_s3(session, data, bucket_name, file_name):
+    """Guarda los datos en un bucket S3."""
+    s3 = session.client('s3')
+    s3.put_object(Bucket=bucket_name, Key=file_name, Body=data)
 
 def create_glue_crawler(session, crawler_name, s3_target, role, database_name):
     """Crea un crawler de AWS Glue."""

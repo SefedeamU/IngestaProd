@@ -27,7 +27,6 @@ load_dotenv()
 def create_boto3_session():
     """Crea una sesión de boto3 usando las credenciales especificadas en el archivo de configuración."""
     try:
-        # Crear la sesión de boto3 usando las credenciales especificadas en el archivo de configuración
         session = boto3.Session(region_name=os.getenv('AWS_REGION', 'us-east-1'))
         return session
     except (BotoCoreError, NoCredentialsError) as e:
@@ -56,12 +55,16 @@ def transform_items(items):
             if isinstance(value, dict):
                 # Extraer el primer (y único) valor del diccionario
                 data_type, data_value = next(iter(value.items()))
-                transformed_item[key] = data_value
+                if isinstance(data_value, dict):
+                    # Si es un diccionario anidado, aplanar
+                    for sub_key, sub_value in data_value.items():
+                        transformed_item[f"{key}_{sub_key}"] = sub_value
+                else:
+                    transformed_item[key] = data_value
             else:
                 transformed_item[key] = value
         transformed_items.append(transformed_item)
     return transformed_items
-
 
 def save_to_s3(session, data, bucket_name, file_name):
     """Guarda los datos en un bucket S3."""
